@@ -455,6 +455,15 @@
       cursor: pointer;
     }
     .ten-label.on { color: var(--text); }
+    .ten-opt { margin-top: 12px; }
+    .ten-opt-label {
+      margin-bottom: 7px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--dim);
+    }
 
     /* Sub-rows inside a category body */
     .sub-row {
@@ -813,13 +822,17 @@ function tensionCombos(typeId) {
   for (const picks of slots) {
     combos = combos.flatMap(c => [c, ...picks.map(pk => [...c, ...pk])]);
   }
-  return combos.filter(c => c.length)
+  return combos.filter(c => c.length && (!S.maxTensions || c.length <= S.maxTensions))
                .map(c => c.slice().sort((a, b) => a.semi - b.semi));
 }
 
 // A dominant carrying all four altered tensions is written alt, as a lead
 // sheet would; everything else lists its tensions in parentheses.
 const ALT_KEY = 'b9|s9|s11|b13';
+
+// Which tensions land is decided at the draw, so a roman numeral written while
+// the pool is built leaves this mark where they belong and romanOf fills it in.
+const TEN_SLOT = '\uE000';
 
 function tensionSuffix(typeId, tensions) {
   const key = tensions.map(v => v.id).join('|');
@@ -905,6 +918,7 @@ const I18N = {
     key:'Key', major:'Major', minor:'Minor',
     voicing:'Voicing',
     showDegrees:'Show Degrees', doubleAcc:'Double Accidentals',
+    tensionProb:'Tension Chance', maxTensions:'Max Tensions', noCap:'No cap',
     tensionsAxis:'Tensions', addedAxis:'Added',
     funcBasic:'Function', funcFull:'Extended',
     triads:'Triads', sevenths:'7ths',
@@ -935,6 +949,7 @@ const I18N = {
     key:'조성', major:'장조', minor:'단조',
     voicing:'보이싱',
     showDegrees:'도수 표시', doubleAcc:'겹임시표 허용',
+    tensionProb:'텐션 확률', maxTensions:'최대 개수', noCap:'제한 없음',
     tensionsAxis:'텐션', addedAxis:'부가음',
     funcBasic:'기본 기능', funcFull:'확장 표기',
     triads:'3화음', sevenths:'7화음',
@@ -1130,6 +1145,10 @@ const S = {
       .flatMap(c => c.types.map(t => t.id))
   ),
   activeTensions: new Set(),   // tensions are opt-in
+  tensionProb:  50,   // % of the 7ths that take tensions
+  maxTensions:   0,   // most tensions on one chord; 0 is no cap
+  tensionBag:   [],   // what is left of the current bag (see takeFromBag)
+  bagProb:    null,   // the probability that bag was filled for
   activeScales: new Set(
     SCALE_CATEGORIES.find(c => c.id === 'basic').scales.map(s => s.id)
   ),
@@ -1279,19 +1298,27 @@ const ADDED_FORMS = {
 // the 7th; added tones drop the 7th, so a dominant would stop being one.
 function voicingForms(triType, sevType) {
   const forms = [];
-  if (S.voicing.has('tri') && triType) forms.push({ typeId: triType, tensions: [], from: 'tri' });
-  if (S.voicing.has('sev') && sevType) forms.push({ typeId: sevType, tensions: [], from: 'sev' });
-  if (S.voicing.has('ten') && sevType) {
-    for (const tens of tensionCombos(sevType)) {
-      forms.push({ typeId: sevType, tensions: tens, from: 'ten' });
-    }
+  if (S.voicing.has('tri') && triType) forms.push({ typeId: triType, from: 'tri' });
+  // Tensions sit on top of a 7th, so they need one. The Tensions chip colours
+  // the 7th form rather than adding a form of its own, and one entry covers
+  // the plain chord together with every tensioned reading of it.
+  if (S.voicing.has('sev') && sevType) {
+    forms.push({
+      typeId: sevType, from: 'sev',
+      pool: S.voicing.has('ten') ? tensionCombos(sevType) : [],
+    });
   }
   if (S.voicing.has('add') && ADDED_FORMS[triType] && sevType !== 'dom7') {
     for (const [tid, suffix] of ADDED_FORMS[triType]) {
-      forms.push({ typeId: tid, tensions: [], from: 'add', suffix });
+      forms.push({ typeId: tid, from: 'add', suffix });
     }
   }
   return forms;
+}
+
+// The tensions a form may pick up, carried into the pool entry.
+function tenSpec(form) {
+  return { pool: form.pool || [] };
 }
 
 // A form's roman numeral. `full` spells the tensions out the way a Berklee
@@ -1300,14 +1327,14 @@ function voicingForms(triType, sevType) {
 function formRoman(form, romanTri, romanSev, full) {
   if (form.from === 'tri') return romanTri;
   if (form.from === 'add') return romanTri + form.suffix;
-  if (form.from === 'ten') {
-    return full ? romanSev + tensionSuffix(form.typeId, form.tensions) : romanSev;
-  }
+  if (full && form.pool && form.pool.length) return romanSev + TEN_SLOT;
   return romanSev;
 }
 
+// A form's identity in the pool. Tensions are left out of it on purpose: the
+// plain 7th and its tensioned readings are one entry, not several.
 function formKey(form) {
-  return form.typeId + (form.tensions.length ? '+' + form.tensions.map(v => v.id).join('+') : '');
+  return form.typeId;
 }
 
 // 'ii7\u2013V7 / V' \u2192 its three pieces
@@ -1362,28 +1389,27 @@ function buildKeyPool() {
             if (S.pairMode === 'pair') {
               add(`p|${idA}|${idB}`, {
                 kind: 'pair',
-                a: { root: ra, typeId: fa.typeId, tensions: fa.tensions },
-                b: { root: rb, typeId: fb.typeId, tensions: fb.tensions },
+                a: Object.assign({ root: ra, typeId: fa.typeId }, tenSpec(fa)),
+                b: Object.assign({ root: rb, typeId: fb.typeId }, tenSpec(fb)),
               }, `${fa1}/${target} – ${fb1}/${target}`,
                  `${fa0}/${target} – ${fb0}/${target}`);
             } else {
-              add(idA, { kind:'keychord', root: ra, typeId: fa.typeId, tensions: fa.tensions,
-                         acc: null }, `${fa1}/${target}`, `${fa0}/${target}`);
-              add(idB, { kind:'keychord', root: rb, typeId: fb.typeId, tensions: fb.tensions,
-                         acc: null }, `${fb1}/${target}`, `${fb0}/${target}`);
+              add(idA, Object.assign({ kind:'keychord', root: ra, typeId: fa.typeId,
+                         acc: null }, tenSpec(fa)), `${fa1}/${target}`, `${fa0}/${target}`);
+              add(idB, Object.assign({ kind:'keychord', root: rb, typeId: fb.typeId,
+                         acc: null }, tenSpec(fb)), `${fb1}/${target}`, `${fb0}/${target}`);
             }
           }
         }
       } else {
         const root = (S.keyRoot + it.deg) % 12;
         for (const f of voicingForms(it.tri && it.tri[0], it.sev && it.sev[0])) {
-          add(`${root}|${formKey(f)}`, {
+          add(`${root}|${formKey(f)}`, Object.assign({
             kind: 'keychord',
             root,
             typeId: f.typeId,
-            tensions: f.tensions,
             acc: it.acc || null,
-          },
+          }, tenSpec(f)),
           formRoman(f, it.tri && it.tri[1], it.sev && it.sev[1], true),
           formRoman(f, it.tri && it.tri[1], it.sev && it.sev[1], false));
         }
@@ -1411,18 +1437,64 @@ function buildPool() {
     for (const root of S.activeRoots) {
       for (const type of ALL_TYPES) {
         if (!S.activeTypes.has(type.id)) continue;
-        S.pool.push({ kind:'chord', root, type, tensions:[], uid:`r|${root}|${type.id}` });
-        // Tensions stack on whichever 7th chords are switched on
-        for (const tens of tensionCombos(type.id)) {
-          const key = tens.map(v => v.id).join('+');
-          S.pool.push({
-            kind:'chord', root, type, tensions:tens,
-            uid:`r|${root}|${type.id}|${key}`,
-          });
-        }
+        // One entry per chord; the tensions the active chips allow ride along
+        // as possibilities and the draw decides whether any of them land.
+        S.pool.push({
+          kind:'chord', root, type, uid:`r|${root}|${type.id}`,
+          pool: tensionCombos(type.id),
+        });
       }
     }
   }
+}
+
+// Whether tensions land is drawn from a shuffled bag rather than flipped coin
+// by coin. Independent flips hold the rate only in the long run: at 25% they
+// leave a dozen plain chords in a row often enough to read as "never", then
+// three coloured ones in a row as "always". A bag of four holding exactly one
+// hit keeps the rate true over every short stretch as well, while the shuffle
+// keeps the order unpredictable. It refills, reshuffled, when it runs out, and
+// again whenever the setting it was filled for has moved.
+const BAG_SIZE = 4;
+
+function takeFromBag() {
+  if (!S.tensionBag.length || S.bagProb !== S.tensionProb) {
+    const hits = Math.round(BAG_SIZE * S.tensionProb / 100);
+    const bag  = Array.from({ length: BAG_SIZE }, (_, i) => i < hits);
+    for (let i = bag.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [bag[i], bag[j]] = [bag[j], bag[i]];
+    }
+    S.tensionBag = bag;
+    S.bagProb    = S.tensionProb;
+  }
+  return S.tensionBag.pop();
+}
+
+// Tensions are a colour on a 7th rather than a chord of their own, so the pool
+// carries the possibilities and each draw takes one decision out of the bag.
+function rollTensions(x) {
+  const pool = x.pool || [];
+  if (!pool.length) return [];
+  if (!takeFromBag()) return [];
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
+// The pool says what an entry can be; resolving fixes what it is this time —
+// which reading to show and which tensions landed. The answer is a copy, so
+// the entry stays neutral and two draws of it never overwrite each other.
+function resolve(item) {
+  const c = Object.assign({}, item, { src: item, romanIdx: 0 });
+  if (item.romans && item.romans.length > 1) {
+    c.romanIdx = Math.floor(Math.random() * item.romans.length);
+  }
+  if (item.kind === 'pair') {
+    c.a = Object.assign({}, item.a, { tensions: rollTensions(item.a) });
+    c.b = Object.assign({}, item.b, { tensions: rollTensions(item.b) });
+  } else {
+    c.tensions = rollTensions(item);
+  }
+  return c;
 }
 
 function draw(avoidUid) {
@@ -1432,20 +1504,14 @@ function draw(avoidUid) {
     candidates = S.pool.filter(c => c.uid !== avoidUid);
     if (!candidates.length) candidates = S.pool;
   }
-  const item = candidates[Math.floor(Math.random() * candidates.length)];
-  // A chord with several readings gets one picked as it is drawn, so the
-  // preview and the chord itself agree
-  if (item && item.romans && item.romans.length > 1) {
-    item.romanIdx = Math.floor(Math.random() * item.romans.length);
-  }
-  return item;
+  return resolve(candidates[Math.floor(Math.random() * candidates.length)]);
 }
 
 // The next item is drawn before it is needed so it can be previewed. A pool
 // rebuild can leave a stale one behind, so check it still belongs.
 function ensureNext() {
   if (!S.pool.length) { S.next = null; return; }
-  if (!S.next || !S.pool.includes(S.next)) {
+  if (!S.next || !S.pool.includes(S.next.src)) {
     S.next = draw(S.current && S.current.uid);
   }
 }
@@ -1558,7 +1624,14 @@ function fitChord() {
 function romanOf(c) {
   const r = c && c.romans && c.romans[c.romanIdx || 0];
   if (!r) return '';
-  return (S.funcMode === 'basic' ? r.basic : r.full) || '';
+  const text = (S.funcMode === 'basic' ? r.basic : r.full) || '';
+  if (text.indexOf(TEN_SLOT) < 0) return text;
+  // One slot per half that can carry tensions, in the order they were written
+  const fills = (c.kind === 'pair' ? [c.a, c.b] : [c])
+    .filter(x => x.pool && x.pool.length)
+    .map(x => x.tensions && x.tensions.length ? tensionSuffix(x.typeId, x.tensions) : '');
+  let i = 0;
+  return text.replace(/\uE000/g, () => fills[i++] || '');
 }
 
 // One key chord as text: note, symbol, and any tensions in parentheses
@@ -1653,8 +1726,21 @@ function renderProgress() {
   }
 }
 
+// A 7th that can pick up tensions stands for a family of chords, so the badge
+// counts what can come out rather than how many entries the pool holds.
+function outcomesOf(x) {
+  const n = x.pool ? x.pool.length : 0;
+  if (!n) return 1;
+  return S.tensionProb >= 100 ? n : n + 1;   // the plain 7th drops out at 100%
+}
+
+function poolCount() {
+  return S.pool.reduce((n, c) =>
+    n + (c.kind === 'pair' ? outcomesOf(c.a) * outcomesOf(c.b) : outcomesOf(c)), 0);
+}
+
 function renderPoolCount() {
-  const n   = S.pool.length;
+  const n   = poolCount();
   const msg = t('poolMsg')(n, S.mode === 'scale');
   $poolBadge.textContent = msg;
   $poolBadge.className   = 'pool-badge' + (n === 0 ? ' warn' : '');
@@ -1792,6 +1878,9 @@ function levelValues(lv) {
                 .filter(c => lv.scaleCats === '*' || lv.scaleCats.includes(c.id))
                 .flatMap(c => c.scales.map(sc => sc.id))),
     voicing:  new Set(lv.voicing),
+    // No level sets these; they are taste, so a level means the defaults
+    tensionProb: 50,
+    maxTensions: 0,
     funcMode: lv.funcMode,
     notes:    lv.notes,
     degrees:  lv.degrees,
@@ -1807,6 +1896,8 @@ function applyLevel(lv) {
   S.activeTensions = v.tensions;
   S.activeScales   = v.scales;
   S.voicing        = v.voicing;
+  S.tensionProb    = v.tensionProb;
+  S.maxTensions    = v.maxTensions;
   S.funcMode       = v.funcMode;
   S.showChordNotes = v.notes;
   S.showDegrees    = v.degrees;
@@ -1830,6 +1921,7 @@ function levelMatches(lv) {
   if (!sameSet(S.activeTensions, v.tensions)) return false;
   if (!sameSet(S.activeScales, v.scales)) return false;
   if (!sameSet(S.voicing, v.voicing)) return false;
+  if (S.tensionProb !== v.tensionProb || S.maxTensions !== v.maxTensions) return false;
   for (const q of ['major', 'minor']) {
     for (const g of KEY_GROUPS) {
       if (!sameSet(S.keySel[q][g.id], v.keySel[q][g.id])) return false;
@@ -1908,7 +2000,7 @@ document.getElementById('noRoots').addEventListener('click', () => {
 
 // ── Toggle-group renderer (shared by chord types & scale types) ──
 function renderToggleGroups(container, cats, opts) {
-  const { itemsOf, idOf, labelOf, selOf, openSet, rowsOf } = opts;
+  const { itemsOf, idOf, labelOf, selOf, openSet, rowsOf, extraOf } = opts;
   container.innerHTML = '';
 
   cats.forEach(cat => {
@@ -1981,6 +2073,9 @@ function renderToggleGroups(container, cats, opts) {
       items.forEach(it => body.appendChild(makeChip(it)));
     }
 
+    const extra = extraOf && extraOf(cat);
+    if (extra) body.appendChild(extra);
+
     header.addEventListener('click', e => {
       if (e.target === chevron) return;
       setAll(items, !items.every(it => sel.has(idOf(it))));
@@ -2027,6 +2122,7 @@ function renderChordCategories() {
     rowsOf:  c  => c.tensions
       ? TENSION_DEGREES.map(d => ({ label: d.label, items: d.variants }))
       : null,
+    extraOf: c  => c.tensions ? tensionOptionRows() : null,
   });
 }
 
@@ -2220,6 +2316,46 @@ document.querySelectorAll('#keyQualSeg .seg-btn').forEach(btn => {
   });
 });
 
+const TENSION_PROBS = [25, 50, 75, 100];
+const MAX_TENSIONS  = [1, 2, 3, 0];   // 0 is no cap
+
+// How tensions come out, as opposed to which ones are allowed. Both modes show
+// these rows on the same state, beside the chips they qualify.
+function tensionOptionRows() {
+  const frag = document.createDocumentFragment();
+
+  const changed = () => {
+    renderKeyTensions();
+    renderChordCategories();   // the other copy of these rows
+    refreshPool();
+  };
+
+  function optRow(key, values, current, apply, fmt) {
+    const wrap = document.createElement('div');
+    wrap.className = 'ten-opt';
+    const label = document.createElement('div');
+    label.className = 'ten-opt-label';
+    label.textContent = t(key);
+    const chips = document.createElement('div');
+    chips.className = 'ten-row';
+    values.forEach(v => {
+      const chip = document.createElement('button');
+      chip.className = 'type-chip' + (v === current ? ' on' : '');
+      chip.textContent = fmt(v);
+      chip.addEventListener('click', () => { apply(v); changed(); });
+      chips.appendChild(chip);
+    });
+    wrap.append(label, chips);
+    frag.appendChild(wrap);
+  }
+
+  optRow('tensionProb', TENSION_PROBS, S.tensionProb,
+         v => S.tensionProb = v, v => v + '%');
+  optRow('maxTensions', MAX_TENSIONS, S.maxTensions,
+         v => S.maxTensions = v, v => v || t('noCap'));
+  return frag;
+}
+
 const $keyTensionRows = document.getElementById('keyTensionRows');
 
 // The same chips as the Tensions category, on the same state, placed where the
@@ -2262,6 +2398,8 @@ function renderKeyTensions() {
     });
     $keyTensionRows.appendChild(row);
   });
+
+  $keyTensionRows.appendChild(tensionOptionRows());
 }
 
 function syncVoicing() {
@@ -2270,16 +2408,22 @@ function syncVoicing() {
   });
 }
 
-// Two independent toggles; the last one enabled can't be turned off
+// Independent toggles, but tensions have nothing to sit on without a 7th, so
+// the two travel together: Tensions brings 7ths in, and dropping 7ths takes
+// Tensions with it. At least one shape stays on.
 document.querySelectorAll('#voicingRow .chip').forEach(btn => {
   btn.addEventListener('click', () => {
-    const v = btn.dataset.v;
-    if (S.voicing.has(v)) {
-      if (S.voicing.size === 1) return;
-      S.voicing.delete(v);
+    const v    = btn.dataset.v;
+    const next = new Set(S.voicing);
+    if (next.has(v)) {
+      next.delete(v);
+      if (v === 'sev') next.delete('ten');
     } else {
-      S.voicing.add(v);
+      next.add(v);
+      if (v === 'ten') next.add('sev');
     }
+    if (!next.size) return;
+    S.voicing = next;
     syncVoicing();
     renderKeyTensions();
     // Voicing feeds the dedup and the chip labels, so redraw the whole list
