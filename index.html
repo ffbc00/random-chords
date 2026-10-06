@@ -1157,9 +1157,10 @@ const S = {
   showDegrees:    false,
   doubleAcc:      false,   // spell D♭dim7 as D♭ F♭ A♭♭ C♭♭
   pool:        [],
-  prev:        null,
-  current:     null,
-  next:        null,   // drawn ahead so it can be previewed
+  hist:          [],   // what has already been shown, oldest first
+  idx:           -1,   // where in hist the chord on screen sits
+  current:     null,   // === hist[idx], kept here so renderers can read one field
+  next:        null,   // drawn ahead of hist so it can be previewed
   showNext:    false,
   tick:        null,
 
@@ -1471,6 +1472,12 @@ function takeFromBag() {
   return S.tensionBag.pop();
 }
 
+// How many steps back the Back button reaches; the history holds one more
+// entry than that, for the chord on screen. Each entry is a shallow copy of a
+// pool item — around 100 bytes — so what bounds this is how far a reader can
+// usefully retrace, not memory.
+const HISTORY = 10;
+
 // Tensions are a colour on a 7th rather than a chord of their own, so the pool
 // carries the possibilities and each draw takes one decision out of the bag.
 function rollTensions(x) {
@@ -1509,30 +1516,49 @@ function draw(avoidUid) {
 
 // The next item is drawn before it is needed so it can be previewed. A pool
 // rebuild can leave a stale one behind, so check it still belongs.
+// The pre-drawn item sits past the end of the history, so it avoids the newest
+// entry — the one it will follow — rather than whatever is on screen now.
 function ensureNext() {
   if (!S.pool.length) { S.next = null; return; }
   if (!S.next || !S.pool.includes(S.next.src)) {
-    S.next = draw(S.current && S.current.uid);
+    const last = S.hist[S.hist.length - 1];
+    S.next = draw(last && last.uid);
   }
 }
 
-function advance() {
+// What comes next: the following entry while the reader is back inside the
+// history, and the pre-drawn item once they are at its end.
+function upcoming() {
+  if (S.idx >= 0 && S.idx < S.hist.length - 1) return S.hist[S.idx + 1];
   ensureNext();
-  S.prev    = S.current;
-  S.current = S.next;
-  S.next    = draw(S.current && S.current.uid);
+  return S.next;
+}
+
+function advance() {
+  if (S.idx < S.hist.length - 1) {
+    S.idx++;                      // retracing: the history already knows this one
+  } else {
+    ensureNext();
+    if (!S.next) return;
+    S.hist.push(S.next);
+    S.next = null;
+    if (S.hist.length > HISTORY + 1) S.hist.shift();
+    S.idx = S.hist.length - 1;
+  }
+  S.current = S.hist[S.idx];
   renderItem();
   renderPeek();
   syncBackBtn();
 }
 
-// One step only, the way a browser's back button behaves after a single visit:
-// the chord just left becomes the next one again.
+// Walking back through what was shown, the way a browser's back button does.
+// Each entry is the chord as it appeared — same reading, same tensions — and
+// going forward again retraces it exactly until the end, where fresh ones
+// start coming out.
 function goBack() {
-  if (!S.prev) return;
-  S.next    = S.current;
-  S.current = S.prev;
-  S.prev    = null;
+  if (S.idx <= 0) return;
+  S.idx--;
+  S.current = S.hist[S.idx];
   S.timeLeft = S.interval;
   renderProgress();
   renderItem();
@@ -1541,7 +1567,7 @@ function goBack() {
 }
 
 function syncBackBtn() {
-  $backBtn.disabled = !S.prev;
+  $backBtn.disabled = S.idx <= 0;
 }
 
 // How any pool item reads on one line
@@ -1554,9 +1580,9 @@ function peekText(c) {
 }
 
 function renderPeek() {
-  ensureNext();
+  const nx = upcoming();
   $nextPeek.textContent =
-    S.showNext && S.current && S.next ? `${t('nextUp')} · ${peekText(S.next)}` : '';
+    S.showNext && S.current && nx ? `${t('nextUp')} · ${peekText(nx)}` : '';
 }
 
 // ═══════════════════════════════════════════════
@@ -2165,8 +2191,9 @@ function applyVisibility() {
 }
 
 function resetDisplay() {
+  S.hist    = [];
+  S.idx     = -1;
   S.current = null;
-  S.prev    = null;
   S.next    = null;
   stopTimer();
   S.running = false;
