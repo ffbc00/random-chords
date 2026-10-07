@@ -445,7 +445,7 @@ G · A · B♭ · C · D · E · F
 
 ### GitHub Pages (권장)
 ```
-https://YOUR_USERNAME.github.io/random-chords/
+https://ffbc00.github.io/random-chords/
 ```
 iOS Safari에서 열고 **공유 → 홈 화면에 추가** 하면 앱처럼 사용할 수 있다.
 
