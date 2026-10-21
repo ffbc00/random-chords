@@ -74,13 +74,11 @@
     }
     .mode-tab.active { color: var(--text); border-bottom-color: var(--accent); }
 
-    /* Display wrappers (shared fade) */
+    /* Display wrappers */
     .chord-wrap, .scale-wrap {
       width: 100%;
       text-align: center;
-      transition: opacity 0.12s ease;
     }
-    .chord-wrap.fade, .scale-wrap.fade { opacity: 0; }
     .scale-wrap { display: none; }
     .scale-wrap.visible { display: block; }
 
@@ -170,15 +168,40 @@
     }
 
     /* ── TIMER ── */
+    /* The next item sits above the current one. Its slot keeps its height
+       while the preview is on, so starting and stopping move nothing. */
     .next-peek {
-      margin-top: 20px;
-      min-height: 21px;   /* holds its place whether or not it has text */
-      font-size: 15px;
+      display: none;
+      width: 100%;
+      height: 48px;
+      margin-bottom: 22px;
+      flex-direction: column;
+      align-items: flex-end;   /* off-centre, so it never reads as the current chord */
+      justify-content: flex-end;
+      gap: 4px;
+      text-align: right;
+    }
+    .next-peek.on { display: flex; }
+    .peek-label {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 1px;
+      text-transform: uppercase;
       color: var(--dim);
-      letter-spacing: 0.2px;
+    }
+    .peek-name {
+      max-width: 100%;
+      font-size: 24px;       /* the maximum; fitPeek() shrinks from here */
+      font-weight: 600;
+      letter-spacing: -0.5px;
+      line-height: 1.1;
+      color: var(--text);
+      opacity: 0.6;
+      white-space: nowrap;
+      overflow: hidden;
     }
     .timer-section {
-      margin-top: 14px;
+      margin-top: 36px;
       width: 100%;
       max-width: 400px;
     }
@@ -197,6 +220,65 @@
       min-width: 52px;
       text-align: right;
     }
+    /* Metronome: one dot per beat, the downbeat larger */
+    .beat-dots { display: none; align-items: center; gap: 9px; }
+    .beat-dots.on { display: flex; }
+    .beat-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--dim);
+      opacity: 0.4;
+      transition: opacity 0.08s, transform 0.08s, background 0.08s;
+    }
+    .beat-dot.accent { width: 14px; height: 14px; }
+    .beat-dot.lit {
+      background: var(--accent);
+      opacity: 1;
+      transform: scale(1.3);
+    }
+    .beat-dots.idle .beat-dot.lit { background: var(--dim); transform: none; }
+
+    .bpm-row { display: flex; align-items: center; gap: 12px; }
+    .bpm-step {
+      width: 40px;
+      padding: 7px 0;
+      font-size: 19px;
+      line-height: 1;
+      flex: none;
+    }
+    .bpm-read {
+      font-size: 15px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    #bpmSlider {
+      flex: 1;
+      min-width: 0;
+      height: 24px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: none;
+    }
+    #bpmSlider::-webkit-slider-runnable-track {
+      height: 6px; border-radius: 3px; background: var(--surf2);
+    }
+    #bpmSlider::-moz-range-track {
+      height: 6px; border-radius: 3px; background: var(--surf2);
+    }
+    #bpmSlider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 22px; height: 22px; margin-top: -8px;
+      border-radius: 50%; background: var(--accent); border: none;
+    }
+    #bpmSlider::-moz-range-thumb {
+      width: 22px; height: 22px;
+      border-radius: 50%; background: var(--accent); border: none;
+    }
+
     .bar-track {
       height: 6px;
       background: var(--surf2);
@@ -527,6 +609,11 @@
 
 <!-- ── MAIN ── -->
 <main class="main">
+  <div class="next-peek" id="nextPeek">
+    <span class="peek-label" id="peekLabel"></span>
+    <span class="peek-name"  id="peekName"></span>
+  </div>
+
   <div class="chord-wrap" id="chordWrap">
     <div class="key-badge"    id="keyBadge"></div>
     <div class="chord-current" id="chordCurrent">Ready</div>
@@ -540,14 +627,13 @@
     <div class="scale-notes" id="scaleNotes"></div>
   </div>
 
-  <div class="next-peek" id="nextPeek"></div>
-
   <div class="timer-section">
     <div class="timer-row">
       <span class="timer-label" id="timerLabel">—</span>
+      <span class="beat-dots"  id="beatDots"></span>
       <span class="timer-num"   id="timerNum"></span>
     </div>
-    <div class="bar-track">
+    <div class="bar-track" id="barTrack">
       <div class="bar-fill" id="barFill"></div>
     </div>
   </div>
@@ -586,13 +672,44 @@
     </div>
   </div>
 
+  <!-- What moves the practice on: a stopwatch or a bar of music -->
+  <div class="s-row"><span class="s-label" data-i18n="timing">Timing</span></div>
+  <div class="seg" id="timeModeSeg">
+    <button class="seg-btn on" data-tm="sec"   data-i18n="bySeconds">Seconds</button>
+    <button class="seg-btn"    data-tm="metro" data-i18n="byMetronome">Metronome</button>
+  </div>
+
   <!-- Interval -->
-  <div class="s-row"><span class="s-label" data-i18n="interval">Interval</span></div>
-  <div class="chip-row" id="intervalRow"></div>
-  <div class="custom-row">
-    <label for="customSec" data-i18n="custom">Custom:</label>
-    <input type="number" id="customSec" class="num-input" min="1" max="300">
-    <button class="btn btn-secondary" id="applyCustom" data-i18n="set" style="padding:7px 14px;font-size:13px">Set</button>
+  <div id="secSection">
+    <div class="s-row"><span class="s-label" data-i18n="interval">Interval</span></div>
+    <div class="chip-row" id="intervalRow"></div>
+    <div class="custom-row">
+      <label for="customSec" data-i18n="custom">Custom:</label>
+      <input type="number" id="customSec" class="num-input" min="1" max="300">
+      <button class="btn btn-secondary" id="applyCustom" data-i18n="set" style="padding:7px 14px;font-size:13px">Set</button>
+    </div>
+  </div>
+
+  <!-- Metronome -->
+  <div id="metroSection" style="display:none">
+    <div class="s-row">
+      <span class="s-label" data-i18n="tempo">Tempo</span>
+      <span class="bpm-read" id="bpmRead">100 BPM</span>
+    </div>
+    <div class="bpm-row">
+      <button class="btn btn-secondary bpm-step" id="bpmDown" aria-label="slower">−</button>
+      <input type="range" id="bpmSlider" min="40" max="240" step="1" value="100">
+      <button class="btn btn-secondary bpm-step" id="bpmUp" aria-label="faster">+</button>
+    </div>
+
+    <div class="s-row"><span class="s-label" data-i18n="beatsPerBar">Beats per Bar</span>
+      <div class="chip-row" id="beatsRow"></div>
+    </div>
+
+    <div class="s-row">
+      <span class="s-label" data-i18n="clickSound">Click</span>
+      <button class="chip on" id="clickBtn">On</button>
+    </div>
   </div>
 
   <!-- Peek at the item that comes next -->
@@ -847,26 +964,26 @@ function tensionSuffix(typeId, tensions) {
 // rather than how hard it is, so no level touches those.
 const LEVELS = [
   { id:'starter',  name:'Intro',        ko:'입문',
-    interval:8, roots:[0,2,4,5,7,9,11],
+    interval:8, bpm:50,  roots:[0,2,4,5,7,9,11],
     types:['maj','min'], tensions:[], scaleCats:['basic'],
     keyGroups:['diatonic'], voicing:['tri'],
     funcMode:'full',  notes:true,  degrees:true  },
 
   { id:'beginner', name:'Beginner',     ko:'초급',
-    interval:6, roots:'*',
+    interval:6, bpm:60,  roots:'*',
     types:['maj','min','aug','dim','sus4'], tensions:[], scaleCats:['basic'],
     keyGroups:['diatonic'], voicing:['sev'],
     funcMode:'full',  notes:true,  degrees:false },
 
   { id:'inter',    name:'Intermediate', ko:'중급',
-    interval:4, roots:'*',
+    interval:4, bpm:80,  roots:'*',
     types:['maj','min','aug','dim','sus4','maj7','min7','dom7','hdim7'],
     tensions:[], scaleCats:['basic','modes'],
     keyGroups:['diatonic','secondary','related'], voicing:['sev'],
     funcMode:'basic', notes:false, degrees:false },
 
   { id:'advanced', name:'Advanced',     ko:'고급',
-    interval:3, roots:'*',
+    interval:3, bpm:100, roots:'*',
     types:'*', tensions:['n9'], scaleCats:'*',
     keyGroups:'*', voicing:['sev','ten'],
     funcMode:'off',   notes:false, degrees:false },
@@ -919,6 +1036,8 @@ const I18N = {
     voicing:'Voicing',
     showDegrees:'Show Degrees', doubleAcc:'Double Accidentals',
     tensionProb:'Tension Chance', maxTensions:'Max Tensions', noCap:'No cap',
+    timing:'Timing', bySeconds:'Seconds', byMetronome:'Metronome',
+    tempo:'Tempo', beatsPerBar:'Beats per Bar', clickSound:'Click',
     tensionsAxis:'Tensions', addedAxis:'Added',
     funcBasic:'Function', funcFull:'Extended',
     triads:'Triads', sevenths:'7ths',
@@ -950,6 +1069,8 @@ const I18N = {
     voicing:'보이싱',
     showDegrees:'도수 표시', doubleAcc:'겹임시표 허용',
     tensionProb:'텐션 확률', maxTensions:'최대 개수', noCap:'제한 없음',
+    timing:'진행 기준', bySeconds:'초 단위', byMetronome:'메트로놈',
+    tempo:'템포', beatsPerBar:'박자', clickSound:'클릭음',
     tensionsAxis:'텐션', addedAxis:'부가음',
     funcBasic:'기본 기능', funcFull:'확장 표기',
     triads:'3화음', sevenths:'7화음',
@@ -1157,6 +1278,16 @@ const S = {
   showDegrees:    false,
   doubleAcc:      false,   // spell D♭dim7 as D♭ F♭ A♭♭ C♭♭
   pool:        [],
+  timeMode:   'sec',   // 'sec' | 'metro'
+  bpm:          100,
+  beats:          4,   // per bar
+  click:       true,
+  beat:          -1,   // beat lit right now; -1 before the first one sounds
+  schedBeat:      0,   // next beat index the scheduler will place
+  nextTime:       0,   // audio-clock time of that beat
+  beatQ:         [],   // beats scheduled for sound, not yet reached on screen
+  raf:         null,
+
   hist:          [],   // what has already been shown, oldest first
   idx:           -1,   // where in hist the chord on screen sits
   current:     null,   // === hist[idx], kept here so renderers can read one field
@@ -1560,6 +1691,7 @@ function goBack() {
   S.idx--;
   S.current = S.hist[S.idx];
   S.timeLeft = S.interval;
+  restartBar();
   renderProgress();
   renderItem();
   renderPeek();
@@ -1579,21 +1711,77 @@ function peekText(c) {
   return chordLabel(c);
 }
 
+const $peekLabel = document.getElementById('peekLabel');
+const $peekName  = document.getElementById('peekName');
+
 function renderPeek() {
   const nx = upcoming();
-  $nextPeek.textContent =
-    S.showNext && S.current && nx ? `${t('nextUp')} · ${peekText(nx)}` : '';
+  $nextPeek.classList.toggle('on', S.showNext);
+  const show = S.showNext && S.current && nx;
+  $peekLabel.textContent = show ? t('nextUp') : '';
+  $peekName.textContent  = show ? peekText(nx) : '';
+  fitPeek();
+}
+
+// A pair with tensions on both halves can run long, so the same
+// step-down as the chord line, from a smaller ceiling.
+function fitPeek() {
+  $peekName.style.fontSize = '';
+  const avail = $nextPeek.clientWidth;
+  if (!avail || !$peekName.textContent) return;
+  let size = parseFloat(getComputedStyle($peekName).fontSize);
+  while (size > 16 && $peekName.scrollWidth > avail) {
+    size -= 1;
+    $peekName.style.fontSize = size + 'px';
+  }
 }
 
 // ═══════════════════════════════════════════════
 // TIMER
 // ═══════════════════════════════════════════════
 
+// setInterval drifts and fires late, which a countdown can absorb but a
+// metronome cannot. So the clicks are placed on the audio clock ahead of time
+// and the screen follows them, rather than the other way round.
+const LOOKAHEAD = 0.12;   // seconds of clicks placed in advance
+const SCHED_MS  = 25;     // how often the scheduler tops them up
+
+let actx = null;
+
+// iOS only lets a page make sound after a touch, so the context is built on
+// the first press of Start and woken again whenever it has been suspended.
+function audio() {
+  const Ctx = window.AudioContext || window.webkitAudioContext;
+  if (!Ctx) return null;
+  if (!actx) actx = new Ctx();
+  if (actx.state === 'suspended') actx.resume();
+  return actx;
+}
+
+function playClick(when, accent) {
+  if (!S.click || !actx) return;
+  const osc  = actx.createOscillator();
+  const gain = actx.createGain();
+  osc.frequency.value = accent ? 1000 : 750;
+  gain.gain.setValueAtTime(0.0001, when);
+  gain.gain.exponentialRampToValueAtTime(accent ? 0.5 : 0.28, when + 0.002);
+  gain.gain.exponentialRampToValueAtTime(0.0001, when + 0.05);
+  osc.connect(gain).connect(actx.destination);
+  osc.start(when);
+  osc.stop(when + 0.06);
+}
+
+const secPerBeat = () => 60 / S.bpm;
+
 // Runs the clock from wherever it stands. Callers that want a full interval
 // set it themselves, so resuming keeps the time left at the pause.
 function startTimer() {
   stopTimer();
+  if (S.timeMode === 'metro') startMetro(); else startCountdown();
   renderProgress();
+}
+
+function startCountdown() {
   S.tick = setInterval(() => {
     S.timeLeft = Math.max(0, S.timeLeft - 0.1);
     if (S.timeLeft <= 0) {
@@ -1604,9 +1792,56 @@ function startTimer() {
   }, 100);
 }
 
+// Picks up on the beat after the one left lit, so a pause keeps its place in
+// the bar: stop on beat 3 of 4 and the fourth beat is still owed.
+function startMetro() {
+  const a = audio();
+  if (!a) return;
+  S.schedBeat = (S.beat + 1) % S.beats;
+  S.nextTime  = a.currentTime + 0.1;
+  S.beatQ     = [];
+  schedule();
+  S.tick = setInterval(schedule, SCHED_MS);
+  S.raf  = requestAnimationFrame(followBeats);
+}
+
+function schedule() {
+  while (S.nextTime < actx.currentTime + LOOKAHEAD) {
+    playClick(S.nextTime, S.schedBeat === 0);
+    S.beatQ.push({ beat: S.schedBeat, time: S.nextTime });
+    S.nextTime += secPerBeat();
+    S.schedBeat = (S.schedBeat + 1) % S.beats;
+  }
+}
+
+// The screen lags the scheduler by design: a beat lights when its click is
+// actually heard, not when it was queued. A downbeat brings the next chord,
+// except the very first one — that bar belongs to the chord already up.
+function followBeats() {
+  while (S.beatQ.length && S.beatQ[0].time <= actx.currentTime) {
+    const q = S.beatQ.shift();
+    const first = S.beat < 0;
+    S.beat = q.beat;
+    if (q.beat === 0 && !first) advance();
+    renderBeats();
+  }
+  S.raf = requestAnimationFrame(followBeats);
+}
+
 function stopTimer() {
   clearInterval(S.tick);
   S.tick = null;
+  cancelAnimationFrame(S.raf);
+  S.raf = null;
+  S.beatQ = [];
+}
+
+// A fresh bar for a chord that did not arrive on its own — Skip, Back, or a
+// change of tempo or metre.
+function restartBar() {
+  S.beat = -1;
+  if (S.timeMode === 'metro' && S.running) startTimer();
+  else renderProgress();
 }
 
 // ═══════════════════════════════════════════════
@@ -1623,6 +1858,8 @@ const $scaleName  = document.getElementById('scaleName');
 const $scaleNotes = document.getElementById('scaleNotes');
 const $barFill    = document.getElementById('barFill');
 const $timerLbl   = document.getElementById('timerLabel');
+const $beatDots   = document.getElementById('beatDots');
+const $barTrack   = document.getElementById('barTrack');
 const $timerNum   = document.getElementById('timerNum');
 const $poolBadge  = document.getElementById('poolBadge');
 const $panelPool  = document.getElementById('panelPool');
@@ -1689,53 +1926,73 @@ function renderTones(c) {
   $chordDegrees.textContent = S.showDegrees    ? line(t => t.deg)  : '';
 }
 
+// The new item goes up the moment it is due. A fade here used to hold it back
+// by 120ms and leave it half-visible for 230ms — long enough, against a
+// metronome click, to read as late.
 function renderItem() {
   if (S.mode === 'chord') {
-    $chordWrap.classList.add('fade');
-    setTimeout(() => {
-      const c = S.current;
-      let text = t('ready'), func = '', isPair = false;
+    const c = S.current;
+    let text = t('ready'), func = '', isPair = false;
 
-      if (c) {
-        if (c.kind === 'pair') {
-          text = `${keyChordText(c.a)} – ${keyChordText(c.b)}`;
-          func = romanOf(c);
-          isPair = true;
-        } else if (c.kind === 'keychord') {
-          text = keyChordText(c);
-          func = romanOf(c);
-        } else {
-          text = chordLabel(c);
-        }
-      }
-
-      $current.textContent = text;
-      $current.classList.toggle('pair', isPair);
-      fitChord();
-      $chordFunc.textContent = (S.chordMode === 'key' && S.funcMode !== 'off') ? func : '';
-      renderTones(c);
-      $chordWrap.classList.remove('fade');
-    }, 120);
-  } else {
-    $scaleWrap.classList.add('fade');
-    setTimeout(() => {
-      if (S.current) {
-        $scaleRoot.textContent  = noteName(S.current.root);
-        $scaleName.textContent  = nm(S.current.scale);
-        $scaleNotes.textContent = S.showNotes
-          ? S.current.scale.intervals.map(i => noteName((S.current.root + i) % 12)).join(' · ')
-          : '';
+    if (c) {
+      if (c.kind === 'pair') {
+        text = `${keyChordText(c.a)} – ${keyChordText(c.b)}`;
+        func = romanOf(c);
+        isPair = true;
+      } else if (c.kind === 'keychord') {
+        text = keyChordText(c);
+        func = romanOf(c);
       } else {
-        $scaleRoot.textContent  = '';
-        $scaleName.textContent  = t('ready');
-        $scaleNotes.textContent = '';
+        text = chordLabel(c);
       }
-      $scaleWrap.classList.remove('fade');
-    }, 120);
+    }
+
+    $current.textContent = text;
+    $current.classList.toggle('pair', isPair);
+    fitChord();
+    $chordFunc.textContent = (S.chordMode === 'key' && S.funcMode !== 'off') ? func : '';
+    renderTones(c);
+  } else {
+    if (S.current) {
+      $scaleRoot.textContent  = noteName(S.current.root);
+      $scaleName.textContent  = nm(S.current.scale);
+      $scaleNotes.textContent = S.showNotes
+        ? S.current.scale.intervals.map(i => noteName((S.current.root + i) % 12)).join(' · ')
+        : '';
+    } else {
+      $scaleRoot.textContent  = '';
+      $scaleName.textContent  = t('ready');
+      $scaleNotes.textContent = '';
+    }
   }
 }
 
+function renderBeats() {
+  const dots = $beatDots.children;
+  for (let i = 0; i < dots.length; i++) {
+    dots[i].classList.toggle('lit', i === S.beat);
+  }
+  $beatDots.classList.toggle('idle', !S.running);
+}
+
+function buildBeats() {
+  $beatDots.innerHTML = '';
+  for (let i = 0; i < S.beats; i++) {
+    const dot = document.createElement('span');
+    dot.className = 'beat-dot' + (i === 0 ? ' accent' : '');
+    $beatDots.appendChild(dot);
+  }
+  renderBeats();
+}
+
 function renderProgress() {
+  if (S.timeMode === 'metro') {
+    // The beat dots already say where in the bar we are; no bar to fill
+    $timerNum.textContent = S.bpm + ' BPM';
+    renderBeats();
+    return;
+  }
+
   const pct = ((S.interval - S.timeLeft) / S.interval * 100).toFixed(2);
   $barFill.style.width = pct + '%';
 
@@ -1817,6 +2074,7 @@ $skipBtn.addEventListener('click', () => {
   S.timeLeft = S.interval;
   renderProgress();   // the bar would otherwise hold its old place until the next tick
   advance();
+  restartBar();       // the chord skipped to gets a whole bar of its own
 });
 
 // ═══════════════════════════════════════════════
@@ -1844,6 +2102,81 @@ function setInterval_(sec) {
   if (S.running) startTimer(); else renderProgress();
   syncLevelChips();   // the interval is part of a level, but changes no pool
 }
+
+const $timeModeSeg = document.getElementById('timeModeSeg');
+const $secSection  = document.getElementById('secSection');
+const $metroSec    = document.getElementById('metroSection');
+const $bpmSlider   = document.getElementById('bpmSlider');
+const $bpmRead     = document.getElementById('bpmRead');
+const $beatsRow    = document.getElementById('beatsRow');
+const $clickBtn    = document.getElementById('clickBtn');
+
+const BEAT_OPTIONS = [2, 3, 4, 6];
+const BPM_MIN = 40, BPM_MAX = 240;
+
+// Which half of the timing settings is on show, and which readout the timer
+// row uses — a countdown in seconds, or a row of beats.
+function applyTiming() {
+  const metro = S.timeMode === 'metro';
+  $secSection.style.display = metro ? 'none' : '';
+  $metroSec.style.display   = metro ? '' : 'none';
+  $timerLbl.style.display   = metro ? 'none' : '';
+  $barTrack.style.display   = metro ? 'none' : '';
+  $beatDots.classList.toggle('on', metro);
+  document.querySelectorAll('#timeModeSeg .seg-btn')
+    .forEach(b => b.classList.toggle('on', (b.dataset.tm === 'metro') === metro));
+  buildBeats();
+  renderProgress();
+}
+
+function setBpm(v) {
+  S.bpm = Math.max(BPM_MIN, Math.min(BPM_MAX, Math.round(v)));
+  $bpmSlider.value   = S.bpm;
+  $bpmRead.textContent = S.bpm + ' BPM';
+  // The scheduler reads the tempo each time round, so a change lands on the
+  // next beat without disturbing the bar already under way.
+  renderProgress();
+  syncLevelChips();   // the tempo is part of a level
+}
+
+function renderBeatChips() {
+  $beatsRow.innerHTML = '';
+  BEAT_OPTIONS.forEach(n => {
+    const chip = document.createElement('button');
+    chip.className = 'chip' + (n === S.beats ? ' on' : '');
+    chip.textContent = n;
+    chip.addEventListener('click', () => {
+      if (S.beats === n) return;
+      S.beats = n;
+      renderBeatChips();
+      buildBeats();
+      restartBar();     // a new metre starts a new bar
+    });
+    $beatsRow.appendChild(chip);
+  });
+}
+
+document.querySelectorAll('#timeModeSeg .seg-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (S.timeMode === btn.dataset.tm) return;
+    S.timeMode = btn.dataset.tm;
+    S.beat     = -1;
+    S.timeLeft = S.interval;
+    applyTiming();
+    if (S.running) startTimer();
+    syncLevelChips();   // the level ladders are written in seconds
+  });
+});
+
+$bpmSlider.addEventListener('input', () => setBpm(+$bpmSlider.value));
+document.getElementById('bpmDown').addEventListener('click', () => setBpm(S.bpm - 1));
+document.getElementById('bpmUp')  .addEventListener('click', () => setBpm(S.bpm + 1));
+
+$clickBtn.addEventListener('click', () => {
+  S.click = !S.click;
+  $clickBtn.textContent = S.click ? t('on') : t('off');
+  $clickBtn.classList.toggle('on', S.click);
+});
 
 PRESETS.forEach(s => {
   const btn = document.createElement('button');
@@ -1897,6 +2230,7 @@ function levelValues(lv) {
   }
   return {
     interval: lv.interval,
+    bpm:      lv.bpm,
     roots:    new Set(lv.roots === '*' ? every12 : lv.roots),
     types:    new Set(lv.types === '*' ? ALL_TYPES.map(ty => ty.id) : lv.types),
     tensions: new Set(lv.tensions),
@@ -1917,6 +2251,7 @@ function levelValues(lv) {
 function applyLevel(lv) {
   const v = levelValues(lv);
   setInterval_(v.interval);
+  setBpm(v.bpm);
   S.activeRoots    = v.roots;
   S.activeTypes    = v.types;
   S.activeTensions = v.tensions;
@@ -1939,7 +2274,10 @@ function applyLevel(lv) {
 // anything clears it by itself — no "you are in intermediate mode" to go stale.
 function levelMatches(lv) {
   const v = levelValues(lv);
-  if (S.interval !== v.interval) return false;
+  // Each mode is matched on its own pace — the countdown on its interval, the
+  // metronome on its tempo. The metre belongs to the piece, not the level.
+  if (S.timeMode === 'sec'   && S.interval !== v.interval) return false;
+  if (S.timeMode === 'metro' && S.bpm      !== v.bpm)      return false;
   if (S.funcMode !== v.funcMode) return false;
   if (S.showChordNotes !== v.notes || S.showDegrees !== v.degrees) return false;
   if (!sameSet(S.activeRoots, v.roots)) return false;
@@ -2195,6 +2533,7 @@ function resetDisplay() {
   S.idx     = -1;
   S.current = null;
   S.next    = null;
+  S.beat    = -1;
   stopTimer();
   S.running = false;
   S.timeLeft = S.interval;
@@ -2632,6 +2971,7 @@ function applyI18n() {
   $showDegreesBtn.textContent  = S.showDegrees    ? t('on') : t('off');
   $doubleAccBtn.textContent    = S.doubleAcc      ? t('on') : t('off');
   $showNextBtn.textContent     = S.showNext       ? t('on') : t('off');
+  $clickBtn.textContent        = S.click          ? t('on') : t('off');
   $showNextBtn.classList.toggle('on', S.showNext);
   document.querySelectorAll('#funcModeRow .chip')
     .forEach(b => b.classList.toggle('on', b.dataset.f === S.funcMode));
@@ -2641,6 +2981,8 @@ function applyI18n() {
 
   // Content rendered from data tables
   renderLevels();
+  renderBeatChips();
+  applyTiming();
   renderChordCategories();
   renderScaleCategories();
   renderKeyGroups();
@@ -2668,10 +3010,12 @@ document.querySelectorAll('#langRow .chip').forEach(btn => {
 // INIT
 // ═══════════════════════════════════════════════
 
-window.addEventListener('resize', fitChord);
+window.addEventListener('resize', () => { fitChord(); fitPeek(); });
 
 renderNoteGrid();
 renderKeyRootGrid();
+setBpm(S.bpm);
+applyTiming();
 applyVisibility();
 refreshPool();
 applyI18n();   // renders chord/scale/key groups and all localized text
