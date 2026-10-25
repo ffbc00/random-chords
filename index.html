@@ -173,7 +173,7 @@
     .next-peek {
       display: none;
       width: 100%;
-      height: 48px;
+      height: 52px;
       margin-bottom: 22px;
       flex-direction: column;
       align-items: flex-end;   /* off-centre, so it never reads as the current chord */
@@ -191,7 +191,7 @@
     }
     .peek-name {
       max-width: 100%;
-      font-size: 24px;       /* the maximum; fitPeek() shrinks from here */
+      font-size: 27px;       /* the maximum; fitPeek() shrinks from here */
       font-weight: 600;
       letter-spacing: -0.5px;
       line-height: 1.1;
@@ -220,6 +220,41 @@
       min-width: 52px;
       text-align: right;
     }
+    /* The jazz major-seventh triangle, drawn rather than typed: the glyph
+       comes out a different size in every font, so it is an SVG sized in em
+       that takes the colour of the text around it. */
+    .tri {
+      display: inline-block;
+      width: 0.528em;
+      height: 0.5em;
+      margin: 0 0.03em;
+      vertical-align: baseline;
+      overflow: visible;
+    }
+    .tri path {
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 3.6;          /* 0.1em — about the weight of the letters beside it */
+      stroke-linejoin: round;
+    }
+    /* ø as a superscript, to sit where the font's own ° does: shrunk until
+       its bowl is about the size of the degree circle, then lifted to cap
+       height. Shrinking also thins its stroke to roughly the circle's. */
+    .hdim {
+      font-size: 0.62em;
+      vertical-align: 0.61em;     /* in its own, smaller em: 0.38em of the text */
+      line-height: 0;             /* raised, it must not open up the line */
+    }
+    /* The character itself stays in the text, unseen, for copying and reading */
+    .drawn-t {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
+      white-space: nowrap;
+    }
+
     /* Metronome: one dot per beat, the downbeat larger */
     .beat-dots { display: none; align-items: center; gap: 9px; }
     .beat-dots.on { display: flex; }
@@ -727,6 +762,17 @@
     </div>
   </div>
 
+  <!-- How chord qualities are written (chord mode only) -->
+  <div id="symbolSection">
+    <div class="s-row">
+      <span class="s-label" data-i18n="chordSymbols">Chord Symbols</span>
+      <div class="chip-row" id="symbolRow">
+        <button class="chip on" data-style="std"  data-i18n="symStd">Standard</button>
+        <button class="chip"    data-style="jazz" data-i18n="symJazz">Jazz</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Notation (hidden when chords follow a key — the key decides the spelling) -->
   <div id="notationSection">
     <div class="s-row">
@@ -1037,6 +1083,7 @@ const I18N = {
     showDegrees:'Show Degrees', doubleAcc:'Double Accidentals',
     tensionProb:'Tension Chance', maxTensions:'Max Tensions', noCap:'No cap',
     timing:'Timing', bySeconds:'Seconds', byMetronome:'Metronome',
+    chordSymbols:'Chord Symbols', symStd:'Standard', symJazz:'Jazz',
     tempo:'Tempo', beatsPerBar:'Beats per Bar', clickSound:'Click',
     tensionsAxis:'Tensions', addedAxis:'Added',
     funcBasic:'Function', funcFull:'Extended',
@@ -1070,6 +1117,7 @@ const I18N = {
     showDegrees:'도수 표시', doubleAcc:'겹임시표 허용',
     tensionProb:'텐션 확률', maxTensions:'최대 개수', noCap:'제한 없음',
     timing:'진행 기준', bySeconds:'초 단위', byMetronome:'메트로놈',
+    chordSymbols:'코드 기호', symStd:'표준', symJazz:'재즈',
     tempo:'템포', beatsPerBar:'박자', clickSound:'클릭음',
     tensionsAxis:'텐션', addedAxis:'부가음',
     funcBasic:'기본 기능', funcFull:'확장 표기',
@@ -1093,6 +1141,64 @@ function nm(obj)   { return S.lang === 'ko' && obj.ko ? obj.ko : obj.name; }
 // ─── KEY PRACTICE ─────────────────────────────
 // Chord symbol lookup, reusing the chord-type table.
 const TYPE_SYM   = Object.fromEntries(ALL_TYPES.map(t => [t.id, t.sym]));
+
+// Jazz chord symbols, the shorthand of handwritten lead sheets: a triangle for
+// the major seventh, a dash for minor, a circle for diminished and a slashed
+// circle for half-diminished. Types not listed read the same either way.
+// The triangle is ▵ (U+25B5), the small one: △ stands as tall as a capital
+// and swamps the letter it follows. The dash is the keyboard hyphen.
+const JAZZ_SYM = {
+  min:'-',   aug:'+',     dim:'°',
+  maj7:'▵7', min7:'-7',   hdim7:'ø7',  dim7:'°7',
+  mMaj7:'-▵7', aug7:'+7', augMaj7:'+▵7',
+  m6:'-6',   madd9:'-add9', m69:'-6/9',
+};
+
+// The triangle is drawn: the system font on an iPhone has no such glyph, and
+// the one borrowed from elsewhere comes out far too big.
+const TRI_HTML =
+  '<svg class="tri" viewBox="-0.5 0 19 18" aria-hidden="true">' +
+  // a shade taller than equilateral: height 14.2 on a base of 15.26
+  '<path d="M9 2 16.63 16.2H1.37Z"/></svg><span class="drawn-t">▵</span>';
+
+const escapeHtml = t => t.replace(/[&<>"]/g, ch =>
+  ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' })[ch]);
+
+// Writes chord text into the page. The triangle is drawn; ø, which every font
+// has, is only lifted into a superscript beside the font's own °.
+function putText(el, text) {
+  if (!/[▵ø]/.test(text)) { el.textContent = text; return; }
+  el.innerHTML = escapeHtml(text)
+    .replace(/▵/g, TRI_HTML)
+    .replace(/ø/g, '<span class="hdim">ø</span>');
+}
+
+function symFor(typeId) {
+  if (S.chordStyle === 'jazz' && typeId in JAZZ_SYM) return JAZZ_SYM[typeId];
+  return TYPE_SYM[typeId];
+}
+
+// Roman numerals follow suit, Berklee-fashion: every numeral in capitals with
+// the chord's quality written after it the way the chord itself is written —
+// ii7 → II-7, IM7 → I▵7, i(M7) → I-▵7, vii°7 → VII°7. A numeral after a slash
+// names the key a chord is borrowed toward, not a chord, so it only capitalises:
+// V7/ii → V7/II.
+const ROMAN_TOKEN =
+  /(?<![A-Za-z])([♭♯]?)(VII|III|II|IV|VI|V|I|vii|iii|ii|iv|vi|v|i)(?![ivIV])(\+|°|ø)?(\(M7\)|M7|7|6\/9|6|add9)?/g;
+
+function styleRoman(r) {
+  if (S.chordStyle !== 'jazz' || !r) return r;
+  return r.replace(ROMAN_TOKEN, (m, acc, num, q, ext, at, str) => {
+    const N = acc + num.toUpperCase();
+    if (str[at - 1] === '/') return N;
+    q = q || ''; ext = ext || '';
+    if (q === '+')       return N + '+' + (ext === 'M7' ? '▵7' : ext);
+    if (q)               return N + q + ext;          // ° and ø already say it all
+    if (ext === '(M7)')  return N + '-▵7';
+    if (ext === 'M7')    return N + '▵7';
+    return N + (num === num.toLowerCase() ? '-' : '') + ext;
+  });
+}
 const TYPE_BY_ID = Object.fromEntries(ALL_TYPES.map(t => [t.id, t]));
 
 // Keys notated with flats, by tonic pitch class
@@ -1278,6 +1384,7 @@ const S = {
   showDegrees:    false,
   doubleAcc:      false,   // spell D♭dim7 as D♭ F♭ A♭♭ C♭♭
   pool:        [],
+  chordStyle: 'std',   // 'std' | 'jazz' — how chord qualities are written
   timeMode:   'sec',   // 'sec' | 'metro'
   bpm:          100,
   beats:          4,   // per bar
@@ -1326,7 +1433,7 @@ function noteName(n) {
 }
 
 function chordLabel(c) {
-  const base = noteName(c.root) + c.type.sym;
+  const base = noteName(c.root) + symFor(c.type.id);
   return c.tensions && c.tensions.length
     ? base + tensionSuffix(c.type.id, c.tensions)
     : base;
@@ -1368,9 +1475,9 @@ function itemsFor(groupId) {
 // labelled from the active voicing instead, so survivors of the dedup above
 // stay tellable apart (i7 vs i(M7), vii°7 vs viiø7).
 function itemLabel(it) {
-  if (!it.flavor) return it.label;
-  if ((S.voicing.has('sev') || S.voicing.has('ten')) && it.sev) return it.sev[1];
-  return it.tri ? it.tri[1] : it.label;
+  if (!it.flavor) return styleRoman(it.label);
+  if ((S.voicing.has('sev') || S.voicing.has('ten')) && it.sev) return styleRoman(it.sev[1]);
+  return styleRoman(it.tri ? it.tri[1] : it.label);
 }
 
 // Borrowed and substitute chords keep their own accidental regardless of the
@@ -1719,7 +1826,7 @@ function renderPeek() {
   $nextPeek.classList.toggle('on', S.showNext);
   const show = S.showNext && S.current && nx;
   $peekLabel.textContent = show ? t('nextUp') : '';
-  $peekName.textContent  = show ? peekText(nx) : '';
+  putText($peekName, show ? peekText(nx) : '');
   fitPeek();
 }
 
@@ -1887,7 +1994,7 @@ function fitChord() {
 function romanOf(c) {
   const r = c && c.romans && c.romans[c.romanIdx || 0];
   if (!r) return '';
-  const text = (S.funcMode === 'basic' ? r.basic : r.full) || '';
+  const text = styleRoman((S.funcMode === 'basic' ? r.basic : r.full) || '');
   if (text.indexOf(TEN_SLOT) < 0) return text;
   // One slot per half that can carry tensions, in the order they were written
   const fills = (c.kind === 'pair' ? [c.a, c.b] : [c])
@@ -1899,7 +2006,7 @@ function romanOf(c) {
 
 // One key chord as text: note, symbol, and any tensions in parentheses
 function keyChordText(x) {
-  const base = noteNameAcc(x.root, x.acc || null) + TYPE_SYM[x.typeId];
+  const base = noteNameAcc(x.root, x.acc || null) + symFor(x.typeId);
   return x.tensions && x.tensions.length
     ? base + tensionSuffix(x.typeId, x.tensions)
     : base;
@@ -1947,10 +2054,10 @@ function renderItem() {
       }
     }
 
-    $current.textContent = text;
+    putText($current, text);
     $current.classList.toggle('pair', isPair);
     fitChord();
-    $chordFunc.textContent = (S.chordMode === 'key' && S.funcMode !== 'off') ? func : '';
+    putText($chordFunc, (S.chordMode === 'key' && S.funcMode !== 'off') ? func : '');
     renderTones(c);
   } else {
     if (S.current) {
@@ -2102,6 +2209,23 @@ function setInterval_(sec) {
   if (S.running) startTimer(); else renderProgress();
   syncLevelChips();   // the interval is part of a level, but changes no pool
 }
+
+function syncSymbolChips() {
+  document.querySelectorAll('#symbolRow .chip')
+    .forEach(b => b.classList.toggle('on', b.dataset.style === S.chordStyle));
+}
+
+document.querySelectorAll('#symbolRow .chip').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (S.chordStyle === btn.dataset.style) return;
+    S.chordStyle = btn.dataset.style;
+    syncSymbolChips();
+    renderChordCategories();
+    renderKeyGroups();
+    if (S.current) renderItem();
+    renderPeek();
+  });
+});
 
 const $timeModeSeg = document.getElementById('timeModeSeg');
 const $secSection  = document.getElementById('secSection');
@@ -2397,7 +2521,7 @@ function renderToggleGroups(container, cats, opts) {
       const id   = idOf(it);
       const chip = document.createElement('button');
       chip.className = 'type-chip' + (sel.has(id) ? ' on' : '');
-      chip.textContent = labelOf(it);
+      putText(chip, labelOf(it));
       chip.addEventListener('click', () => {
         if (sel.has(id)) sel.delete(id); else sel.add(id);
         chip.classList.toggle('on', sel.has(id));
@@ -2480,7 +2604,7 @@ function renderChordCategories() {
   renderToggleGroups($catGrid, CATEGORIES, {
     itemsOf: c  => c.tensions || c.types,
     idOf:    it => it.id,
-    labelOf: it => it.sym === '' ? 'maj' : it.sym,
+    labelOf: it => TYPE_BY_ID[it.id] ? (symFor(it.id) || 'maj') : it.sym,
     selOf:   c  => c.tensions ? S.activeTensions : S.activeTypes,
     openSet: openChordCats,
     rowsOf:  c  => c.tensions
@@ -2497,6 +2621,7 @@ const $scaleTypesSection = document.getElementById('scaleTypesSection');
 const $rootSection        = document.getElementById('rootSection');
 const $keyPracticeSection = document.getElementById('keyPracticeSection');
 const $notationSection    = document.getElementById('notationSection');
+const $symbolSection      = document.getElementById('symbolSection');
 const $practiceModeSec    = document.getElementById('practiceModeSection');
 const $chordDisplaySec    = document.getElementById('chordDisplaySection');
 
@@ -2517,6 +2642,7 @@ function applyVisibility() {
 
   // When chords follow a key, the key itself decides ♯/♭, so the manual choice is hidden
   $notationSection.style.display    = isKey ? 'none' : '';
+  $symbolSection.style.display      = isChord ? '' : 'none';
   $rootSection.style.display        = isKey ? 'none' : '';
   $chordTypesSection.style.display  = (isChord && !isKey) ? '' : 'none';
   $keyPracticeSection.style.display = isKey ? '' : 'none';
@@ -2892,7 +3018,7 @@ function renderKeyGroups() {
     const chips = items.map(it => {
       const chip = document.createElement('button');
       chip.className = 'type-chip' + (sel.has(it.id) ? ' on' : '');
-      chip.textContent = itemLabel(it);
+      putText(chip, itemLabel(it));
       chip.addEventListener('click', () => {
         if (sel.has(it.id)) sel.delete(it.id);
         else                sel.add(it.id);
@@ -2947,7 +3073,7 @@ document.querySelectorAll('#funcModeRow .chip').forEach(btn => {
       .forEach(b => b.classList.toggle('on', b === btn));
     syncLevelChips();
     if (S.current && S.chordMode === 'key') {
-      $chordFunc.textContent = S.funcMode !== 'off' ? romanOf(S.current) : '';
+      putText($chordFunc, S.funcMode !== 'off' ? romanOf(S.current) : '');
     }
   });
 });
