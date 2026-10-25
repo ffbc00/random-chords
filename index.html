@@ -745,6 +745,11 @@
       <span class="s-label" data-i18n="clickSound">Click</span>
       <button class="chip on" id="clickBtn">On</button>
     </div>
+    <div class="s-row" id="silentPlayRow" style="display:none">
+      <span class="s-label" data-i18n="silentPlay">Play in Silent Mode</span>
+      <button class="chip on" id="silentPlayBtn">On</button>
+    </div>
+    <div class="level-hint" id="silentPlayHint" data-i18n="silentPlayHint" style="display:none">On: heard with the ring switch muted, but other music pauses. Off: mixes with other music.</div>
   </div>
 
   <!-- Peek at the item that comes next -->
@@ -1085,6 +1090,8 @@ const I18N = {
     timing:'Timing', bySeconds:'Seconds', byMetronome:'Metronome',
     chordSymbols:'Chord Symbols', symStd:'Standard', symJazz:'Jazz',
     tempo:'Tempo', beatsPerBar:'Beats per Bar', clickSound:'Click',
+    silentPlay:'Play in Silent Mode',
+    silentPlayHint:'On: heard with the ring switch muted, but other music pauses. Off: mixes with other music.',
     tensionsAxis:'Tensions', addedAxis:'Added',
     funcBasic:'Function', funcFull:'Extended',
     triads:'Triads', sevenths:'7ths',
@@ -1119,6 +1126,8 @@ const I18N = {
     timing:'진행 기준', bySeconds:'초 단위', byMetronome:'메트로놈',
     chordSymbols:'코드 기호', symStd:'표준', symJazz:'재즈',
     tempo:'템포', beatsPerBar:'박자', clickSound:'클릭음',
+    silentPlay:'무음 모드에서도 재생',
+    silentPlayHint:'켜면 진동 모드에서도 들리지만 다른 앱의 음악이 멈춥니다. 끄면 다른 음악과 함께 들립니다.',
     tensionsAxis:'텐션', addedAxis:'부가음',
     funcBasic:'기본 기능', funcFull:'확장 표기',
     triads:'3화음', sevenths:'7화음',
@@ -1389,6 +1398,7 @@ const S = {
   bpm:          100,
   beats:          4,   // per bar
   click:       true,
+  silentPlay:  true,   // iOS: sound through the silent switch (see audioSessionType)
   beat:          -1,   // beat lit right now; -1 before the first one sounds
   schedBeat:      0,   // next beat index the scheduler will place
   nextTime:       0,   // audio-clock time of that beat
@@ -1860,9 +1870,22 @@ let actx = null;
 function audio() {
   const Ctx = window.AudioContext || window.webkitAudioContext;
   if (!Ctx) return null;
+  applyAudioSession();
   if (!actx) actx = new Ctx();
   if (actx.state === 'suspended') actx.resume();
   return actx;
+}
+
+// Safari files Web Audio under 'ambient': it mixes with other apps' music but
+// falls silent when the phone's ring switch is on mute. 'playback' is how a
+// video plays — heard through the switch, at the price of pausing other music,
+// as a video would. The reader chooses. Only Safari has the Audio Session API;
+// elsewhere this does nothing, and the setting is not shown.
+const HAS_AUDIO_SESSION = !!(navigator.audioSession && 'type' in navigator.audioSession);
+
+function applyAudioSession() {
+  if (!HAS_AUDIO_SESSION) return;
+  try { navigator.audioSession.type = S.silentPlay ? 'playback' : 'ambient'; } catch (e) {}
 }
 
 function playClick(when, accent) {
@@ -1941,6 +1964,9 @@ function stopTimer() {
   cancelAnimationFrame(S.raf);
   S.raf = null;
   S.beatQ = [];
+  // A running context keeps the audio session claimed; letting it rest while
+  // stopped hands the speaker back, so paused music elsewhere can resume
+  if (actx && actx.state === 'running') actx.suspend();
 }
 
 // A fresh bar for a chord that did not arrive on its own — Skip, Back, or a
@@ -2300,6 +2326,18 @@ $clickBtn.addEventListener('click', () => {
   S.click = !S.click;
   $clickBtn.textContent = S.click ? t('on') : t('off');
   $clickBtn.classList.toggle('on', S.click);
+});
+
+const $silentPlayBtn = document.getElementById('silentPlayBtn');
+if (HAS_AUDIO_SESSION) {
+  document.getElementById('silentPlayRow').style.display  = '';
+  document.getElementById('silentPlayHint').style.display = '';
+}
+$silentPlayBtn.addEventListener('click', () => {
+  S.silentPlay = !S.silentPlay;
+  $silentPlayBtn.textContent = S.silentPlay ? t('on') : t('off');
+  $silentPlayBtn.classList.toggle('on', S.silentPlay);
+  applyAudioSession();
 });
 
 PRESETS.forEach(s => {
@@ -3098,6 +3136,7 @@ function applyI18n() {
   $doubleAccBtn.textContent    = S.doubleAcc      ? t('on') : t('off');
   $showNextBtn.textContent     = S.showNext       ? t('on') : t('off');
   $clickBtn.textContent        = S.click          ? t('on') : t('off');
+  $silentPlayBtn.textContent   = S.silentPlay     ? t('on') : t('off');
   $showNextBtn.classList.toggle('on', S.showNext);
   document.querySelectorAll('#funcModeRow .chip')
     .forEach(b => b.classList.toggle('on', b.dataset.f === S.funcMode));
