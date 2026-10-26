@@ -1878,8 +1878,17 @@ function audio() {
   const Ctx = window.AudioContext || window.webkitAudioContext;
   if (!Ctx) return null;
   applyAudioSession();
+  // WebKit can leave a context 'interrupted' once its audio session has been
+  // let go, and resume() does not reliably bring it back. A fresh one, made
+  // inside the tap that starts the metronome, always runs.
+  if (actx && (actx.state === 'interrupted' || actx.state === 'closed')) {
+    try { actx.close(); } catch (e) {}
+    actx = null;
+  }
   if (!actx) actx = new Ctx();
-  if (actx.state === 'suspended') actx.resume();
+  // 'suspended' is not the only state that is not running; anything else gets
+  // woken as well
+  if (actx.state !== 'running') actx.resume();
   return actx;
 }
 
@@ -1922,6 +1931,7 @@ function startTimer() {
 }
 
 function startCountdown() {
+  releaseAudio();     // the countdown makes no sound
   S.tick = setInterval(() => {
     S.timeLeft = Math.max(0, S.timeLeft - 0.1);
     if (S.timeLeft <= 0) {
@@ -1957,8 +1967,17 @@ function schedule() {
 // The screen lags the scheduler by design: a beat lights when its click is
 // actually heard, not when it was queued. A downbeat brings the next chord,
 // except the very first one — that bar belongs to the chord already up.
+// Last check on the audio clock: if it has stood still for half a second while
+// the metronome is meant to be running, something stopped the context under
+// us, and it is asked to run again.
+let clockSeen = 0, clockSeenAt = 0;
+
 function followBeats() {
-  while (S.beatQ.length && S.beatQ[0].time <= actx.currentTime) {
+  const now = actx.currentTime;
+  if (now !== clockSeen) { clockSeen = now; clockSeenAt = performance.now(); }
+  else if (performance.now() - clockSeenAt > 500) { actx.resume(); clockSeenAt = performance.now(); }
+
+  while (S.beatQ.length && S.beatQ[0].time <= now) {
     const q = S.beatQ.shift();
     const first = S.beat < 0;
     S.beat = q.beat;
@@ -1974,8 +1993,15 @@ function stopTimer() {
   cancelAnimationFrame(S.raf);
   S.raf = null;
   S.beatQ = [];
-  // A running context keeps the audio session claimed; letting it rest while
-  // stopped hands the speaker back, so paused music elsewhere can resume
+}
+
+// A running context keeps the audio session claimed; letting it rest while
+// nothing sounds hands the speaker back, so music paused elsewhere can resume.
+// Called only on the way to silence. stopTimer() used to do it, but every start
+// runs stopTimer() first, and in Safari a suspend still settling outlasts the
+// start's check for a sleeping context — the metronome then started on a
+// clock that was about to freeze.
+function releaseAudio() {
   if (actx && actx.state === 'running') actx.suspend();
 }
 
@@ -2195,6 +2221,7 @@ function refreshPool() {
 $startBtn.addEventListener('click', () => {
   if (S.running) {
     stopTimer();
+    releaseAudio();
     S.running = false;
     $startBtn.textContent = t('resume');
     renderProgress();
@@ -2709,6 +2736,7 @@ function resetDisplay() {
   S.next    = null;
   S.beat    = -1;
   stopTimer();
+  releaseAudio();
   S.running = false;
   S.timeLeft = S.interval;
   $startBtn.textContent = t('start');
