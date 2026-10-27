@@ -79,14 +79,25 @@
       width: 100%;
       text-align: center;
     }
+    /* The lines under one another keep their height whatever they hold. The
+       main area centres everything vertically, so a line that shrank with a
+       long chord used to pull the timer and buttons up with it. Each line's
+       box is sized from these, never from the font size fitting changes. */
+    .chord-wrap {
+      --chord-h: clamp(72px, 18vw, 160px);
+      --func-h:  clamp(15px, 4vw, 24px);
+      --tone-h:  clamp(14px, 3.6vw, 20px);
+    }
     .scale-wrap { display: none; }
     .scale-wrap.visible { display: block; }
 
     .chord-current {
-      font-size: clamp(72px, 18vw, 160px);   /* the maximum; fitChord() shrinks from here */
+      font-size: var(--chord-h);   /* the maximum; fitChord() shrinks from here */
       font-weight: 600;
       letter-spacing: -1.5px;
-      line-height: 1;
+      /* a line always as tall as the biggest chord; a smaller one is centred in it */
+      line-height: var(--chord-h);
+      height: calc(var(--chord-h) + 0.15em);   /* + the descender room below */
       white-space: nowrap;
       overflow: hidden;
       /* A line one em tall leaves only ~0.14em below the baseline, and the
@@ -110,10 +121,16 @@
     }
     .key-badge.visible { display: block; }
     .chord-tones {
-      font-size: clamp(14px, 3.6vw, 20px);
+      font-size: var(--tone-h);
       color: var(--dim);
       margin-top: 8px;
       letter-spacing: 0.3px;
+      white-space: nowrap;     /* one line; fitLine() shrinks a long pair */
+      overflow: hidden;
+    }
+    .chord-tones.on {          /* while shown, a fixed line — even before Start */
+      height: calc(var(--tone-h) * 1.35);
+      line-height: calc(var(--tone-h) * 1.35);
     }
     .chord-tones.deg {
       margin-top: 2px;
@@ -121,11 +138,14 @@
       opacity: 0.72;
     }
     .chord-func {
-      font-size: clamp(15px, 4vw, 24px);
+      font-size: var(--func-h);
       font-weight: 700;
       color: var(--accent);
       margin-top: 10px;
-      min-height: 26px;
+      height: max(26px, calc(var(--func-h) * 1.35));
+      line-height: max(26px, calc(var(--func-h) * 1.35));
+      white-space: nowrap;     /* one line; fitLine() shrinks a long pair */
+      overflow: hidden;
     }
 
     /* Segmented control */
@@ -2093,6 +2113,23 @@ function renderTones(c) {
     : '';
   $chordNotes.textContent   = S.showChordNotes ? line(t => t.note) : '';
   $chordDegrees.textContent = S.showDegrees    ? line(t => t.deg)  : '';
+  $chordNotes.classList.toggle('on', S.showChordNotes);
+  $chordDegrees.classList.toggle('on', S.showDegrees);
+  fitLine($chordNotes, 10);
+  fitLine($chordDegrees, 10);
+}
+
+// A one-line box that keeps its height: when the text outruns it, the text
+// steps down in size rather than wrapping onto a second line.
+function fitLine(el, min) {
+  el.style.fontSize = '';
+  const avail = el.clientWidth;
+  if (!avail || !el.textContent) return;
+  let size = parseFloat(getComputedStyle(el).fontSize);
+  while (size > min && el.scrollWidth > avail) {
+    size -= 1;
+    el.style.fontSize = size + 'px';
+  }
 }
 
 // The new item goes up the moment it is due. A fade here used to hold it back
@@ -2120,6 +2157,7 @@ function renderItem() {
     $current.classList.toggle('pair', isPair);
     fitChord();
     putText($chordFunc, (S.chordMode === 'key' && S.funcMode !== 'off') ? func : '');
+    fitLine($chordFunc, 11);
     renderTones(c);
   } else {
     if (S.current) {
@@ -3150,6 +3188,7 @@ document.querySelectorAll('#funcModeRow .chip').forEach(btn => {
     syncLevelChips();
     if (S.current && S.chordMode === 'key') {
       putText($chordFunc, S.funcMode !== 'off' ? romanOf(S.current) : '');
+      fitLine($chordFunc, 11);
     }
   });
 });
@@ -3213,7 +3252,10 @@ document.querySelectorAll('#langRow .chip').forEach(btn => {
 // INIT
 // ═══════════════════════════════════════════════
 
-window.addEventListener('resize', () => { fitChord(); fitPeek(); });
+window.addEventListener('resize', () => {
+  fitChord(); fitPeek();
+  fitLine($chordFunc, 11); fitLine($chordNotes, 10); fitLine($chordDegrees, 10);
+});
 
 renderNoteGrid();
 renderKeyRootGrid();
